@@ -1,5 +1,9 @@
 use crate::cache::{CacheConfig, ChannelCache, GuildCache, RelationshipCache, UserCache};
-use crate::model::{Channel, Guild, Message, Relationship, User};
+use crate::model::{
+    Channel, Guild, MergedMember, Message, PassiveChannelState, PassiveUpdateV1, Presence,
+    ReadStateContainer, ReadStateEntry, ReadySupplemental, Relationship, User,
+};
+use dashmap::DashMap;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::sync::Arc;
@@ -12,6 +16,9 @@ pub struct Cache {
     channel_cache: ChannelCache,
     guild_cache: GuildCache,
     relationship_cache: RelationshipCache,
+    read_states: Arc<DashMap<String, ReadStateEntry>>,
+    guild_members: Arc<DashMap<String, Vec<MergedMember>>>,
+    passive_channel_states: Arc<DashMap<String, PassiveChannelState>>,
     /// Current user
     current_user: Arc<RwLock<Option<User>>>,
 }
@@ -29,6 +36,9 @@ impl Cache {
             channel_cache: ChannelCache::new(config.cache_channels),
             guild_cache: GuildCache::new(config.cache_guilds),
             relationship_cache: RelationshipCache::new(config.cache_relationships),
+            read_states: Arc::new(DashMap::new()),
+            guild_members: Arc::new(DashMap::new()),
+            passive_channel_states: Arc::new(DashMap::new()),
             config,
             current_user: Arc::new(RwLock::new(None)),
         }
@@ -47,6 +57,7 @@ impl Cache {
         self.initialize_users(data["users"].clone());
         self.initialize_guilds(data["guilds"].clone());
         self.initialize_relationships(data["relationships"].clone());
+        self.initialize_read_states(data["read_state"].clone());
     }
 
     /// Updates cache state from one gateway dispatch event payload.
@@ -55,6 +66,8 @@ impl Cache {
     pub fn update_from_dispatch(&self, event_type: &str, data: &Value) {
         match event_type {
             "READY" => self.initialize(data.clone()),
+            "READY_SUPPLEMENTAL" => self.update_presence_from_ready_supplemental(data),
+            "PASSIVE_UPDATE_V1" => self.update_from_passive_update(data),
             "CHANNEL_CREATE" | "CHANNEL_UPDATE" | "THREAD_CREATE" | "THREAD_UPDATE" => {
                 if let Ok(channel) = serde_json::from_value::<Channel>(data.clone()) {
                     self.cache_channel(channel);
@@ -127,6 +140,7 @@ impl Cache {
                 if let Some(user_payload) = data.get("user") {
                     self.upsert_user_from_partial(user_payload);
                 }
+                self.update_user_presence_from_event(data);
             }
             "GUILD_MEMBER_ADD" | "GUILD_MEMBER_UPDATE" => {
                 if let Some(user_payload) = data.get("user") {
@@ -223,6 +237,30 @@ impl Cache {
         self.relationship_cache.friends()
     }
 
+    // ==================== Read States ====================
+
+    /// Initializes read-state cache from the READY event's `read_state` payload.
+    pub fn initialize_read_states(&self, data: Value) {
+        let container = serde_json::from_value::<ReadStateContainer>(data).unwrap_or_default();
+        self.read_states.clear();
+        for entry in container.entries {
+            self.read_states.insert(entry.id.clone(), entry);
+        }
+    }
+
+    /// Gets one read-state entry by channel or guild id.
+    pub fn read_state(&self, id: &str) -> Option<ReadStateEntry> {
+        self.read_states.get(id).map(|entry| entry.value().clone())
+    }
+
+    /// Gets all read-state entries.
+    pub fn read_states(&self) -> Vec<ReadStateEntry> {
+        self.read_states
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
+    }
+
     // ==================== Channels ====================
 
     /// Gets a channel from cache by ID
@@ -283,6 +321,32 @@ impl Cache {
         self.guild_cache.all()
     }
 
+    // ==================== Supplemental Guild Members ====================
+
+    /// Gets merged supplemental members by guild id.
+    pub fn guild_members(&self, guild_id: &str) -> Vec<MergedMember> {
+        self.guild_members
+            .get(guild_id)
+            .map(|entry| entry.value().clone())
+            .unwrap_or_default()
+    }
+
+    /// Gets one merged supplemental member by guild id and user id.
+    pub fn guild_member(&self, guild_id: &str, user_id: &str) -> Option<MergedMember> {
+        self.guild_members(guild_id)
+            .into_iter()
+            .find(|member| member.user_id == user_id)
+    }
+
+    // ==================== Passive Channel States ====================
+
+    /// Gets passive channel state by channel id.
+    pub fn passive_channel_state(&self, channel_id: &str) -> Option<PassiveChannelState> {
+        self.passive_channel_states
+            .get(channel_id)
+            .map(|entry| entry.value().clone())
+    }
+
     // ==================== Cache Management ====================
 
     pub fn config(&self) -> &CacheConfig {
@@ -295,6 +359,9 @@ impl Cache {
         self.channel_cache.clear();
         self.guild_cache.clear();
         self.relationship_cache.clear();
+        self.read_states.clear();
+        self.guild_members.clear();
+        self.passive_channel_states.clear();
         *self.current_user.write() = None;
     }
 
@@ -351,6 +418,106 @@ impl Cache {
             self.cache_user(user);
         }
     }
+
+    fn update_user_presence_from_event(&self, presence_event: &Value) {
+        let Some(user_id) = presence_event
+            .get("user")
+            .and_then(|user| user.get("id"))
+            .and_then(|v| v.as_str())
+        else {
+            return;
+        };
+
+        let Some(mut user) = self.user(user_id) else {
+            return;
+        };
+
+        if let Some(presence) = parse_presence_event(presence_event) {
+            user.presence = Some(presence);
+            self.cache_user(user.clone());
+
+            if self
+                .current_user()
+                .as_ref()
+                .map(|current| current.id == user_id)
+                .unwrap_or(false)
+            {
+                self.set_current_user(user);
+            }
+        }
+    }
+
+    fn update_presence_from_ready_supplemental(&self, data: &Value) {
+        let Ok(ready_supplemental) = serde_json::from_value::<ReadySupplemental>(data.clone())
+        else {
+            return;
+        };
+
+        for entry in &ready_supplemental.merged_presences.friends {
+            self.update_user_presence_from_merged_entry(entry);
+        }
+
+        for entries in &ready_supplemental.merged_presences.guilds {
+            for entry in entries {
+                self.update_user_presence_from_merged_entry(entry);
+            }
+        }
+
+        if let Some(guilds) = data.get("guilds").and_then(|v| v.as_array()) {
+            for (idx, guild_payload) in guilds.iter().enumerate() {
+                let Some(guild_id) = guild_payload.get("id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let members = ready_supplemental
+                    .merged_members
+                    .get(idx)
+                    .cloned()
+                    .unwrap_or_default();
+                if !members.is_empty() {
+                    self.guild_members.insert(guild_id.to_string(), members);
+                }
+            }
+        }
+    }
+
+    fn update_from_passive_update(&self, data: &Value) {
+        let Ok(payload) = serde_json::from_value::<PassiveUpdateV1>(data.clone()) else {
+            return;
+        };
+
+        for state in payload.channels {
+            if let Some(mut channel) = self.channel(&state.id) {
+                channel.last_message_id = state.last_message_id.clone();
+                channel.last_pin_timestamp = state.last_pin_timestamp.clone();
+                self.cache_channel(channel);
+            }
+            self.passive_channel_states.insert(state.id.clone(), state);
+        }
+    }
+
+    fn update_user_presence_from_merged_entry(&self, entry: &Value) {
+        let Some(user_id) = entry.get("user_id").and_then(|v| v.as_str()) else {
+            return;
+        };
+
+        let Some(mut user) = self.user(user_id) else {
+            return;
+        };
+
+        if let Some(presence) = parse_merged_presence_entry(entry) {
+            user.presence = Some(presence);
+            self.cache_user(user.clone());
+
+            if self
+                .current_user()
+                .as_ref()
+                .map(|current| current.id == user_id)
+                .unwrap_or(false)
+            {
+                self.set_current_user(user);
+            }
+        }
+    }
 }
 
 impl Default for Cache {
@@ -378,4 +545,43 @@ fn merge_object_values(target: &mut Value, patch: &Value) {
     for (key, value) in patch_obj {
         target_obj.insert(key.clone(), value.clone());
     }
+}
+
+fn parse_presence_event(event: &Value) -> Option<Presence> {
+    let status = event.get("status").and_then(|v| v.as_str())?.to_string();
+    let activities = event
+        .get("activities")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let client_status = event.get("client_status").cloned();
+    let since = event.get("since").and_then(|v| v.as_i64());
+    let afk = event.get("afk").and_then(|v| v.as_bool());
+
+    Some(Presence {
+        status,
+        activities,
+        client_status: client_status.and_then(|v| serde_json::from_value(v).ok()),
+        since,
+        afk,
+    })
+}
+
+fn parse_merged_presence_entry(entry: &Value) -> Option<Presence> {
+    let status = entry.get("status").and_then(|v| v.as_str())?.to_string();
+    let activities = entry
+        .get("activities")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let client_status = entry.get("client_status").cloned();
+    let afk = entry.get("afk").and_then(|v| v.as_bool());
+
+    Some(Presence {
+        status,
+        activities,
+        client_status: client_status.and_then(|v| serde_json::from_value(v).ok()),
+        since: None,
+        afk,
+    })
 }

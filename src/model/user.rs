@@ -76,6 +76,36 @@ pub struct User {
     /// The user's primary guild
     #[serde(default)]
     pub primary_guild: Option<PrimaryGuild>,
+
+    /// Live presence data when available from gateway events.
+    #[serde(default)]
+    pub presence: Option<Presence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Presence {
+    /// Online status (`online`, `idle`, `dnd`, `offline`, ...)
+    pub status: String,
+
+    /// Current activities as raw payload entries.
+    #[serde(default)]
+    pub activities: Vec<serde_json::Value>,
+
+    /// Client platform statuses (`desktop`, `mobile`, `web`) when provided.
+    pub client_status: Option<ClientStatus>,
+
+    /// Unix time (ms) when user went idle, if any.
+    pub since: Option<i64>,
+
+    /// AFK flag from gateway presence payload.
+    pub afk: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientStatus {
+    pub desktop: Option<String>,
+    pub mobile: Option<String>,
+    pub web: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

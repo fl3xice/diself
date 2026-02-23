@@ -1,6 +1,7 @@
 mod channel;
 mod embed;
 mod guild;
+mod gateway_state;
 mod interaction;
 mod message;
 mod permissions;
@@ -16,6 +17,10 @@ pub use embed::{
     EmbedVideo,
 };
 pub use guild::{Ban, Guild, Member, SupplementalMember};
+pub use gateway_state::{
+    MergedMember, PassiveChannelState, PassiveUpdateV1, ReadStateContainer, ReadStateEntry,
+    ReadySupplemental,
+};
 pub use interaction::Interaction;
 pub use message::{
     Attachment, Message, MessageActivity, MessageType, Sticker, SupplementalMessageRequest,
@@ -25,4 +30,4 @@ pub use poll::Poll;
 pub use reaction::{Emoji, Reaction};
 pub use relationship::{Relationship, RelationshipType};
 pub use role::{Role, RoleColors, RoleTags};
-pub use user::{Avatar, Nameplate, User, UserProfile};
+pub use user::{Avatar, ClientStatus, Nameplate, Presence, User, UserProfile};

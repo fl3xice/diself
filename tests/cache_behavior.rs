@@ -60,6 +60,37 @@ fn cache_initialize_reads_ready_user() {
 }
 
 #[test]
+fn cache_initialize_reads_read_states() {
+    let cache = Cache::new();
+    let ready_payload = json!({
+        "user": {
+            "id": "555",
+            "username": "ready_user",
+            "discriminator": "1234"
+        },
+        "users": [],
+        "guilds": [],
+        "relationships": [],
+        "read_state": {
+            "entries": [
+                {
+                    "id": "chan_1",
+                    "read_state_type": 0,
+                    "last_acked_id": "msg_9",
+                    "badge_count": 2
+                }
+            ]
+        }
+    });
+
+    cache.initialize(ready_payload);
+
+    let read_state = cache.read_state("chan_1").expect("read state should be set");
+    assert_eq!(read_state.last_acked_id.as_deref(), Some("msg_9"));
+    assert_eq!(read_state.badge_count, Some(2));
+}
+
+#[test]
 fn cache_updates_user_from_partial_presence_event() {
     let cache = Cache::new();
     cache.cache_user(sample_user("42"));
@@ -70,6 +101,11 @@ fn cache_updates_user_from_partial_presence_event() {
             "user": {
                 "id": "42",
                 "global_name": "Updated Name"
+            },
+            "status": "online",
+            "activities": [],
+            "client_status": {
+                "desktop": "online"
             }
         }),
     );
@@ -77,6 +113,15 @@ fn cache_updates_user_from_partial_presence_event() {
     let user = cache.user("42").expect("user should still exist");
     assert_eq!(user.global_name.as_deref(), Some("Updated Name"));
     assert_eq!(user.username, "user_42");
+    let presence = user.presence.expect("presence should be set");
+    assert_eq!(presence.status, "online");
+    assert_eq!(
+        presence
+            .client_status
+            .and_then(|platform| platform.desktop)
+            .as_deref(),
+        Some("online")
+    );
 }
 
 #[test]
@@ -148,4 +193,124 @@ fn cache_updates_guild_and_relationship_from_dispatch() {
 
     cache.update_from_dispatch("GUILD_DELETE", &json!({ "id": "g1" }));
     assert!(cache.guild("g1").is_none());
+}
+
+#[test]
+fn cache_updates_presence_from_ready_supplemental_merged_presences() {
+    let cache = Cache::new();
+    cache.cache_user(sample_user("1153408586026856468"));
+    cache.cache_user(sample_user("726837366815195156"));
+
+    cache.update_from_dispatch(
+        "READY_SUPPLEMENTAL",
+        &json!({
+            "merged_presences": {
+                "friends": [
+                    {
+                        "user_id": "1153408586026856468",
+                        "status": "dnd",
+                        "client_status": { "desktop": "dnd" },
+                        "activities": [{ "name": "Visual Studio Code", "type": 0 }]
+                    }
+                ],
+                "guilds": [
+                    [],
+                    [
+                        {
+                            "user_id": "726837366815195156",
+                            "status": "online",
+                            "client_status": { "desktop": "online" },
+                            "activities": [{ "name": "League of Legends", "type": 0 }]
+                        }
+                    ]
+                ]
+            }
+        }),
+    );
+
+    let user_friend = cache
+        .user("1153408586026856468")
+        .expect("friend user should be cached");
+    let friend_presence = user_friend.presence.expect("friend presence should be set");
+    assert_eq!(friend_presence.status, "dnd");
+
+    let user_guild = cache
+        .user("726837366815195156")
+        .expect("guild user should be cached");
+    let guild_presence = user_guild.presence.expect("guild presence should be set");
+    assert_eq!(guild_presence.status, "online");
+}
+
+#[test]
+fn cache_updates_merged_members_from_ready_supplemental() {
+    let cache = Cache::new();
+
+    cache.update_from_dispatch(
+        "READY_SUPPLEMENTAL",
+        &json!({
+            "guilds": [
+                { "id": "g1" }
+            ],
+            "merged_presences": {
+                "friends": [],
+                "guilds": []
+            },
+            "merged_members": [
+                [
+                    {
+                        "user_id": "u1",
+                        "roles": ["r1"],
+                        "pending": false,
+                        "mute": false,
+                        "deaf": false,
+                        "flags": 0
+                    }
+                ]
+            ]
+        }),
+    );
+
+    let member = cache
+        .guild_member("g1", "u1")
+        .expect("merged member should be present");
+    assert_eq!(member.roles, vec!["r1".to_string()]);
+}
+
+#[test]
+fn cache_updates_channel_from_passive_update() {
+    let cache = Cache::new();
+    cache.update_from_dispatch(
+        "CHANNEL_CREATE",
+        &json!({
+            "id": "c-passive",
+            "type": 0,
+            "name": "general"
+        }),
+    );
+
+    cache.update_from_dispatch(
+        "PASSIVE_UPDATE_V1",
+        &json!({
+            "guild_id": "g1",
+            "channels": [
+                {
+                    "id": "c-passive",
+                    "last_message_id": "m77",
+                    "last_pin_timestamp": "2026-02-23T00:00:00+00:00"
+                }
+            ]
+        }),
+    );
+
+    let updated = cache
+        .channel("c-passive")
+        .expect("channel should be cached after passive update");
+    assert_eq!(updated.last_message_id.as_deref(), Some("m77"));
+    assert_eq!(
+        cache
+            .passive_channel_state("c-passive")
+            .and_then(|state| state.last_message_id)
+            .as_deref(),
+        Some("m77")
+    );
 }

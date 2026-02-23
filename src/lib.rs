@@ -14,7 +14,10 @@ pub use client::{
 };
 pub use error::{CaptchaInfo, Error, Result};
 pub use http::HttpClient;
-pub use model::{Channel, Message, User};
+pub use model::{
+    Channel, Message, PassiveChannelState, PassiveUpdateV1, ReadStateEntry, ReadySupplemental,
+    User,
+};
 
 /// Prelude module for easy imports
 ///
@@ -32,6 +35,9 @@ pub mod prelude {
     };
     pub use crate::error::{CaptchaInfo, Error, Result};
     pub use crate::http::HttpClient;
-    pub use crate::model::{Channel, Message, User};
+    pub use crate::model::{
+        Channel, Message, PassiveChannelState, PassiveUpdateV1, ReadStateEntry, ReadySupplemental,
+        User,
+    };
     pub use async_trait::async_trait;
 }

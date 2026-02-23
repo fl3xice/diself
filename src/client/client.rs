@@ -3,7 +3,7 @@ use crate::client::{ClientBuilder, Context, DispatchEvent, DispatchEventType, Ev
 use crate::error::{CaptchaInfo, Result};
 use crate::gateway::Gateway;
 use crate::http::HttpClient;
-use crate::model::{Message, User};
+use crate::model::{Message, PassiveUpdateV1, ReadySupplemental, User};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -231,6 +231,13 @@ impl Client {
                         self.handler
                             .on_ready_supplemental(ctx, ctx.user.clone(), dispatch.data.clone())
                             .await;
+                        if let Ok(data) =
+                            serde_json::from_value::<ReadySupplemental>(dispatch.data.clone())
+                        {
+                            self.handler
+                                .on_ready_supplemental_typed(ctx, ctx.user.clone(), data)
+                                .await;
+                        }
                     }
                     DispatchEventType::MessageCreate => {
                         if let Ok(message) = serde_json::from_value::<Message>(dispatch.data) {
@@ -470,6 +477,10 @@ impl Client {
                 .handler
                 .on_presence_update(ctx, dispatch.data.clone())
                 .await,
+            DispatchEventType::PassiveUpdateV1 => self
+                .handler
+                .on_passive_update_v1(ctx, dispatch.data.clone())
+                .await,
             DispatchEventType::StageInstanceCreate => self
                 .handler
                 .on_stage_instance_create(ctx, dispatch.data.clone())
@@ -521,6 +532,12 @@ impl Client {
                 .on_relationship_remove(ctx, dispatch.data.clone())
                 .await,
             DispatchEventType::Unknown(_) => {}
+        }
+
+        if let DispatchEventType::PassiveUpdateV1 = dispatch.kind {
+            if let Ok(data) = serde_json::from_value::<PassiveUpdateV1>(dispatch.data.clone()) {
+                self.handler.on_passive_update_v1_typed(ctx, data).await;
+            }
         }
     }
 }

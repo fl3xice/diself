@@ -1,5 +1,5 @@
 use crate::client::{Context, DispatchEvent};
-use crate::model::{Message, User};
+use crate::model::{Message, PassiveUpdateV1, ReadySupplemental, User};
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -45,6 +45,16 @@ pub trait EventHandler: Send + Sync {
 
     /// Called soon after the READY event, and giving extra information about the session
     async fn on_ready_supplemental(&self, ctx: &Context, user: User, data: Value) {
+        let _ = (ctx, user, data);
+    }
+
+    /// Typed READY_SUPPLEMENTAL callback.
+    async fn on_ready_supplemental_typed(
+        &self,
+        ctx: &Context,
+        user: User,
+        data: ReadySupplemental,
+    ) {
         let _ = (ctx, user, data);
     }
 
@@ -260,6 +270,9 @@ pub trait EventHandler: Send + Sync {
     async fn on_presence_update(&self, ctx: &Context, data: Value) {
         let _ = (ctx, data);
     }
+    async fn on_passive_update_v1(&self, ctx: &Context, data: Value) {
+        let _ = (ctx, data);
+    }
     async fn on_stage_instance_create(&self, ctx: &Context, data: Value) {
         let _ = (ctx, data);
     }
@@ -300,6 +313,11 @@ pub trait EventHandler: Send + Sync {
         let _ = (ctx, data);
     }
     async fn on_relationship_remove(&self, ctx: &Context, data: Value) {
+        let _ = (ctx, data);
+    }
+
+    /// Typed PASSIVE_UPDATE_V1 callback.
+    async fn on_passive_update_v1_typed(&self, ctx: &Context, data: PassiveUpdateV1) {
         let _ = (ctx, data);
     }
 }
