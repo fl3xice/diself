@@ -88,7 +88,7 @@ pub struct UserProfile {
 
     /// The user's profile metadata
     #[serde(default)]
-    pub profile_metadata: Option<ProfileMetadata>,
+    pub user_profile: Option<ProfileMetadata>,
 
     /// The user's profile badges
     #[serde(default)]

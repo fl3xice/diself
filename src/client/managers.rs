@@ -26,8 +26,25 @@ impl UsersManager {
     }
 
     /// Fetches a user by id (`/users/{id}`). SEE: <https://docs.discord.food/resources/user#get-user>
-    pub async fn get(&self, http: &HttpClient, user_id: impl AsRef<str>) -> Result<User> {
-        let response = http
+    ///
+    /// # Note
+    ///  User accounts cannot fetch `/users/{id}` directly. You must provide a `bot_token`
+    /// to authenticate as a bot, or use `get_profile()` instead which works for user accounts.
+    pub async fn get(
+        &self,
+        http: &HttpClient,
+        user_id: impl AsRef<str>,
+        bot_token: Option<&str>,
+    ) -> Result<User> {
+        let client = if let Some(token) = bot_token {
+            // Create temporary HTTP client with bot token
+            HttpClient::new(token)
+        } else {
+            // Use existing client (will likely fail for user tokens)
+            http.clone()
+        };
+
+        let response = client
             .get(api_url(&format!("/users/{}", user_id.as_ref())))
             .await?;
         let user = serde_json::from_value(response)?;
