@@ -205,16 +205,25 @@ impl Client {
                 let dispatch = DispatchEvent::from_gateway_payload(event_type, sequence, data);
 
                 let dispatch_kind = dispatch.kind.clone();
+                let dispatch_name = dispatch.name().to_string();
+                let maybe_old_user = if matches!(dispatch_kind, DispatchEventType::UserUpdate) {
+                    dispatch
+                        .data
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|id| ctx.cache.user(id))
+                } else {
+                    None
+                };
+
+                ctx.cache.update_from_dispatch(&dispatch_name, &dispatch.data);
                 ctx.collectors.dispatch(dispatch.clone());
                 self.handler.on_dispatch(ctx, dispatch.clone()).await;
                 self.dispatch_raw_event(ctx, &dispatch).await;
 
                 match dispatch_kind {
                     DispatchEventType::Ready => {
-                        if let Ok(user) =
-                            serde_json::from_value::<User>(dispatch.data["user"].clone())
-                        {
-                            ctx.cache.initialize(dispatch.data);
+                        if let Some(user) = ctx.cache.current_user() {
                             self.handler.on_ready(ctx, user).await;
                         }
                     }
@@ -225,16 +234,11 @@ impl Client {
                     }
                     DispatchEventType::MessageCreate => {
                         if let Ok(message) = serde_json::from_value::<Message>(dispatch.data) {
-                            ctx.cache.cache_user(message.author.clone());
-                            for user in &message.mentions {
-                                ctx.cache.cache_user(user.clone());
-                            }
                             self.handler.on_message_create(ctx, message).await;
                         }
                     }
                     DispatchEventType::MessageUpdate => {
                         if let Ok(message) = serde_json::from_value::<Message>(dispatch.data) {
-                            ctx.cache.cache_user(message.author.clone());
                             self.handler.on_message_update(ctx, message).await;
                         }
                     }
@@ -250,6 +254,12 @@ impl Client {
                                     message_id.to_string(),
                                 )
                                 .await;
+                        }
+                    }
+                    DispatchEventType::UserUpdate => {
+                        if let Ok(new_user) = serde_json::from_value::<User>(dispatch.data) {
+                            let old_user = maybe_old_user.unwrap_or_else(|| new_user.clone());
+                            self.handler.on_user_update(ctx, old_user, new_user).await;
                         }
                     }
                     DispatchEventType::Unknown(name) => {

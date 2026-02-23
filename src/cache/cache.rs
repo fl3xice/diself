@@ -1,6 +1,7 @@
 use crate::cache::{CacheConfig, ChannelCache, GuildCache, RelationshipCache, UserCache};
-use crate::model::{Channel, Guild, Relationship, User};
+use crate::model::{Channel, Guild, Message, Relationship, User};
 use parking_lot::RwLock;
+use serde_json::Value;
 use std::sync::Arc;
 
 /// Thread-safe cache for Discord entities
@@ -46,6 +47,103 @@ impl Cache {
         self.initialize_users(data["users"].clone());
         self.initialize_guilds(data["guilds"].clone());
         self.initialize_relationships(data["relationships"].clone());
+    }
+
+    /// Updates cache state from one gateway dispatch event payload.
+    ///
+    /// `event_type` must be the raw gateway dispatch event name, for example `MESSAGE_CREATE`.
+    pub fn update_from_dispatch(&self, event_type: &str, data: &Value) {
+        match event_type {
+            "READY" => self.initialize(data.clone()),
+            "CHANNEL_CREATE" | "CHANNEL_UPDATE" | "THREAD_CREATE" | "THREAD_UPDATE" => {
+                if let Ok(channel) = serde_json::from_value::<Channel>(data.clone()) {
+                    self.cache_channel(channel);
+                }
+            }
+            "CHANNEL_DELETE" | "THREAD_DELETE" => {
+                if let Some(channel_id) = data.get("id").and_then(|v| v.as_str()) {
+                    self.remove_channel(channel_id);
+                }
+            }
+            "THREAD_LIST_SYNC" => {
+                if let Some(threads) = data.get("threads").and_then(|v| v.as_array()) {
+                    for thread in threads {
+                        if let Ok(channel) = serde_json::from_value::<Channel>(thread.clone()) {
+                            self.cache_channel(channel);
+                        }
+                    }
+                }
+            }
+            "GUILD_CREATE" | "GUILD_UPDATE" => {
+                if let Ok(guild) = serde_json::from_value::<Guild>(data.clone()) {
+                    for channel in &guild.channels {
+                        self.cache_channel(channel.clone());
+                    }
+                    for member in &guild.members {
+                        self.cache_user(member.user.clone());
+                    }
+                    self.cache_guild(guild);
+                }
+            }
+            "GUILD_DELETE" => {
+                if let Some(guild_id) = data.get("id").and_then(|v| v.as_str()) {
+                    self.remove_guild(guild_id);
+                }
+            }
+            "RELATIONSHIP_ADD" => {
+                if let Ok(relationship) = serde_json::from_value::<Relationship>(data.clone()) {
+                    self.cache_relationship(relationship);
+                }
+            }
+            "RELATIONSHIP_REMOVE" => {
+                if let Some(user_id) = data.get("id").and_then(|v| v.as_str()) {
+                    self.remove_relationship(user_id);
+                }
+            }
+            "MESSAGE_CREATE" | "MESSAGE_UPDATE" => {
+                if let Ok(message) = serde_json::from_value::<Message>(data.clone()) {
+                    self.cache_user(message.author);
+                    for user in message.mentions {
+                        self.cache_user(user);
+                    }
+                    if let Some(thread) = message.thread {
+                        self.cache_channel(thread);
+                    }
+                }
+            }
+            "USER_UPDATE" => {
+                self.upsert_user_from_partial(data);
+                if let Some(user_id) = data.get("id").and_then(|v| v.as_str()) {
+                    if let Some(current) = self.current_user() {
+                        if current.id == user_id {
+                            if let Some(updated) = self.user(user_id) {
+                                self.set_current_user(updated);
+                            }
+                        }
+                    }
+                }
+            }
+            "PRESENCE_UPDATE" => {
+                if let Some(user_payload) = data.get("user") {
+                    self.upsert_user_from_partial(user_payload);
+                }
+            }
+            "GUILD_MEMBER_ADD" | "GUILD_MEMBER_UPDATE" => {
+                if let Some(user_payload) = data.get("user") {
+                    self.upsert_user_from_partial(user_payload);
+                }
+            }
+            "GUILD_MEMBERS_CHUNK" => {
+                if let Some(members) = data.get("members").and_then(|v| v.as_array()) {
+                    for member in members {
+                        if let Some(user_payload) = member.get("user") {
+                            self.upsert_user_from_partial(user_payload);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     // ==================== Current User ====================
@@ -228,6 +326,31 @@ impl Cache {
             guilds: self.guild_count(),
         }
     }
+
+    fn upsert_user_from_partial(&self, partial: &Value) {
+        if let Ok(user) = serde_json::from_value::<User>(partial.clone()) {
+            self.cache_user(user);
+            return;
+        }
+
+        let Some(user_id) = partial.get("id").and_then(|v| v.as_str()) else {
+            return;
+        };
+        let Some(existing) = self.user(user_id) else {
+            return;
+        };
+
+        let mut merged = match serde_json::to_value(existing) {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+
+        merge_object_values(&mut merged, partial);
+
+        if let Ok(user) = serde_json::from_value::<User>(merged) {
+            self.cache_user(user);
+        }
+    }
 }
 
 impl Default for Cache {
@@ -242,4 +365,17 @@ pub struct CacheStats {
     pub users: usize,
     pub channels: usize,
     pub guilds: usize,
+}
+
+fn merge_object_values(target: &mut Value, patch: &Value) {
+    let Some(target_obj) = target.as_object_mut() else {
+        return;
+    };
+    let Some(patch_obj) = patch.as_object() else {
+        return;
+    };
+
+    for (key, value) in patch_obj {
+        target_obj.insert(key.clone(), value.clone());
+    }
 }
