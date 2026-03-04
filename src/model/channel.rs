@@ -20,6 +20,7 @@ pub enum ChannelType {
     GuildStageVoice = 13,
     GuildDirectory = 14,
     GuildForum = 15,
+    GuildMedia = 16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

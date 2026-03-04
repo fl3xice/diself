@@ -225,7 +225,7 @@ pub struct Member {
     pub mute: bool,
 
     /// The timestamp when the member joined the guild, in ISO8601 format
-    pub joined_at: String,
+    pub joined_at: Option<String>,
 
     /// The timestamp when the member started boosting the guild, in ISO8601 format (if any)
     pub premium_since: Option<String>,
