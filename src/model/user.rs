@@ -159,10 +159,7 @@ pub struct UserProfile {
 impl User {
     /// Returns the user's tag (username#discriminator)
     pub fn tag(&self) -> String {
-        match &self.discriminator {
-            Some(d) if d != "0" => format!("{}#{}", self.username, d),
-            _ => self.username.clone(),
-        }
+        self.discriminator.clone()
     }
 
     /// Returns the URL of the user's avatar (if any)
