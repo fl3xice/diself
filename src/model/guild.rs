@@ -4,37 +4,118 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum GuildFeatures {
+    ActivitiesAlpha,
+    ActivitiesEmployee,
+    ActivitiesInternalDev,
+    ActivityFeedDisabledByUser,
+    ActivityFeedEnabledByUser,
+    AgeVerificationLargeGuild,
     AnimatedBanner,
     AnimatedIcon,
-    ApplicationCommandPermissionsV2,
+    AudioBitrate128Kbps,
+    AudioBitrate256Kbps,
+    AudioBitrate384Kbps,
     AutoModeration,
     Banner,
+    #[serde(rename = "BFG")]
+    Bfg,
+    BotDeveloperEarlyAccess,
+    BypassSlowmodePermissionMigrationComplete,
+    ChannelEmojisGenerated,
+    ChannelIconEmojisGenerated,
+    Commerce,
     Community,
-    CreatorMonetizableProvisions,
+    CommunityCanary,
+    CommunityExpLargeGated,
+    CommunityExpLargeUngated,
+    CommunityExpMedium,
+    ConsideredExternallyDiscoverable,
+    CreatorMonetizable,
+    CreatorMonetizableDisabled,
+    CreatorMonetizablePendingNewOwnerOnboarding,
+    CreatorMonetizableProvisional,
+    CreatorMonetizableRestricted,
+    CreatorMonetizableWhiteglove,
+    CreatorMonetizationApplicationAllowlist,
+    CreatorStorePage,
     DeveloperSupportServer,
     Discoverable,
-    Featurable,
+    DiscoverableDisabled,
+    EnabledDiscoverableBefore,
+    EnabledModerationExperienceForNonCommunity,
+    EnhancedRoleColors,
+    ExposedToActivitiesWtpExperiment,
+    ForwardingDisabled,
+    GameServerHosting,
+    GameServers,
+    GuestsEnabled,
+    GuildOnboarding,
+    GuildOnboardingEverEnabled,
+    GuildOnboardingHasPrompts,
+    GuildProducts,
+    GuildProductsAllowArchivedFile,
+    GuildServerGuide,
+    GuildTags,
+    GuildTagsBadgePackFlex,
+    GuildTagsBadgePackPets,
+    GuildWebPageVanityUrl,
+    HadEarlyActivitiesAccess,
+    HasDirectoryEntry,
+    HideFromExperimentUi,
+    Hub,
+    IncreasedThreadLimit,
+    InternalEmployeeOnly,
     InviteSplash,
-    InviteDisable,
+    InvitesDisabled,
+    LinkedToHub,
+    MaxFileSize50Mb,
+    MaxFileSize100Mb,
     MemberVerificationGateEnabled,
+    MemberVerificationManualApproval,
+    MoreEmoji,
     MoreSoundboard,
     MoreStickers,
     News,
+    NonCommunityRaidAlerts,
     Partnered,
+    PinPermissionMigrationComplete,
+    PremiumTier3Override,
     PreviewEnabled,
+    ProductsAvailableForPurchase,
     RaidAlertsDisabled,
+    RelayEnabled,
+    ReportToModPilot,
+    ReportToModSurvey,
     RoleIcons,
     RoleSubscriptionsAvailableForPurchase,
     RoleSubscriptionsEnabled,
+    SharedCanvasFriendsAndFamilyTest,
+    SocialLayerStorefront,
     Soundboard,
-    TicketedEventsEnabled,
+    StageChannelViewers50,
+    StageChannelViewers150,
+    StageChannelViewers300,
+    StaffLevelCollaboratorRequired,
+    StaffLevelRestrictedCollaboratorRequired,
+    SummariesDisabledByUser,
+    SummariesEnabledByUser,
+    SummariesEnabledGa,
+    SummariesLongLookback,
+    SummariesOptOutExperience,
+    TierlessBoosting,
+    TierlessBoostingSystemMessage,
     VanityUrl,
     Verified,
+    VideoBitrateEnhanced,
+    #[serde(rename = "VIDEO_QUALITY_720_60FPS")]
+    VideoQuality72060Fps,
+    #[serde(rename = "VIDEO_QUALITY_1080_60FPS")]
+    VideoQuality108060Fps,
     VipRegions,
+    VoiceInThreads,
     WelcomeScreenEnabled,
-    GuestsEnabled,
-    GuildTags,
-    EnhancedRoleColors,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +129,9 @@ pub struct Guild {
 
     /// Icon hash (if the guild has an icon)
     pub icon_hash: Option<String>,
+
+    /// The guild's home header hash, used in new member welcome
+    pub home_header: Option<String>,
 
     /// Splash hash
     pub splash: Option<String>,
@@ -180,6 +264,14 @@ pub struct Guild {
     /// 0: DEFAULT, 1: EXPLICIT, 2: SAFE, 3: AGE_RESTRICTED
     pub nsfw_level: Option<u8>,
 
+    /// The owner-configured NSFW level of the guild
+    pub owner_configured_content_level: Option<u8>,
+
+    /// Whether the guild is considered NSFW (EXPLICIT or AGE_RESTRICTED)
+    #[deprecated]
+    #[serde(default)]
+    pub nsfw: bool,
+
     /// The custom guild stickers
     pub stickers: Option<Vec<Sticker>>,
 
@@ -189,6 +281,25 @@ pub struct Guild {
 
     /// The id of the channel where admins and moderators of Community guilds receive safety alerts from Discord
     pub safety_alerts_channel_id: Option<String>,
+
+    /// The type of student hub the guild is, if it is a student hub
+    pub hub_type: Option<u8>,
+
+    /// The ID of the guild's latest onboarding prompt option
+    pub latest_onboarding_question_id: Option<String>,
+
+    /// Information on the guild's AutoMod incidents
+    pub incidents_data: Option<AutomodIncidentsData>,
+
+    /// Settings for emoji packs
+    #[deprecated]
+    pub inventory_settings: Option<GuildInventorySettings>,
+
+    /// The guild's powerup information
+    pub premium_features: Option<GuildPremiumFeatures>,
+
+    /// The guild's identity
+    pub profile: Option<GuildIdentity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,7 +336,7 @@ pub struct Member {
     pub mute: bool,
 
     /// The timestamp when the member joined the guild, in ISO8601 format
-    pub joined_at: String,
+    pub joined_at: Option<String>,
 
     /// The timestamp when the member started boosting the guild, in ISO8601 format (if any)
     pub premium_since: Option<String>,
@@ -298,6 +409,30 @@ pub struct WelcomeScreenChannel {
 
     /// The unicode emoji displayed for the channel in the welcome screen (if no custom emoji is set)
     pub emoji_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomodIncidentsData {
+    pub dm_spam_detected_at: Option<String>,
+    pub raid_detected_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildInventorySettings {
+    pub is_emoji_pack_collectible: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildPremiumFeatures {
+    pub features: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildIdentity {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub tag: Option<String>,
+    pub badge: Option<u64>,
 }
 
 impl Guild {
