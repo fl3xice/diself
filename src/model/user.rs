@@ -10,8 +10,8 @@ pub struct User {
     /// Username
     pub username: String,
 
-    /// Discriminator (deprecated, null for new username system users)
-    pub discriminator: Option<String>,
+    /// Discriminator (deprecated)
+    pub discriminator: String,
 
     /// User's display name (if any)
     pub global_name: Option<String>,
