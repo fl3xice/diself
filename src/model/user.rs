@@ -10,8 +10,8 @@ pub struct User {
     /// Username
     pub username: String,
 
-    /// Discriminator (deprecated)
-    pub discriminator: String,
+    /// Discriminator (deprecated, null for new username system users)
+    pub discriminator: Option<String>,
 
     /// User's display name (if any)
     pub global_name: Option<String>,
@@ -159,7 +159,10 @@ pub struct UserProfile {
 impl User {
     /// Returns the user's tag (username#discriminator)
     pub fn tag(&self) -> String {
-        format!("{}#{}", self.username, self.discriminator)
+        match &self.discriminator {
+            Some(d) if d != "0" => format!("{}#{}", self.username, d),
+            _ => self.username.clone(),
+        }
     }
 
     /// Returns the URL of the user's avatar (if any)

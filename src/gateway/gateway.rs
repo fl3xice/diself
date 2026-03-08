@@ -109,26 +109,7 @@ impl Gateway {
                                 self.can_resume()
                             );
                             if let Some(guilds) = payload["d"]["guilds"].as_array() {
-                                let guild_ids: Vec<String> = guilds
-                                    .iter()
-                                    .filter_map(|g| g["id"].as_str().map(ToOwned::to_owned))
-                                    .collect();
-                                if let Some(conn) = self.connection.as_mut() {
-                                    for guild_id in guild_ids {
-                                        let op14 = json!({
-                                            "op": 14,
-                                            "d": {
-                                                "guild_id": guild_id,
-                                                "typing": true,
-                                                "threads": true,
-                                                "activities": true,
-                                            }
-                                        });
-                                        if let Err(e) = conn.send(&op14).await {
-                                            tracing::warn!("Failed to subscribe to guild {}: {}", guild_id, e);
-                                        }
-                                    }
-                                }
+                                self.subscribe_to_guilds(guilds).await;
                             }
                         }
                         "RESUMED" => {
@@ -172,6 +153,30 @@ impl Gateway {
                 Ok(None)
             }
             _ => Ok(None),
+        }
+    }
+
+    async fn subscribe_to_guilds(&mut self, guilds: &[Value]) {
+        let Some(conn) = self.connection.as_mut() else {
+            return;
+        };
+        let mut op14 = json!({
+            "op": 14,
+            "d": {
+                "guild_id": "",
+                "typing": true,
+                "threads": true,
+                "activities": true,
+            }
+        });
+        for guild in guilds {
+            let Some(guild_id) = guild["id"].as_str() else {
+                continue;
+            };
+            op14["d"]["guild_id"] = Value::String(guild_id.to_owned());
+            if let Err(e) = conn.send(&op14).await {
+                tracing::warn!("Failed to subscribe to guild {}: {}", guild_id, e);
+            }
         }
     }
 

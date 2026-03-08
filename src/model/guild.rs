@@ -49,6 +49,9 @@ pub struct Guild {
     /// Icon hash (if the guild has an icon)
     pub icon_hash: Option<String>,
 
+    /// The guild's home header hash, used in new member welcome
+    pub home_header: Option<String>,
+
     /// Splash hash
     pub splash: Option<String>,
 
@@ -180,6 +183,14 @@ pub struct Guild {
     /// 0: DEFAULT, 1: EXPLICIT, 2: SAFE, 3: AGE_RESTRICTED
     pub nsfw_level: Option<u8>,
 
+    /// The owner-configured NSFW level of the guild
+    pub owner_configured_content_level: Option<u8>,
+
+    /// Whether the guild is considered NSFW (EXPLICIT or AGE_RESTRICTED)
+    #[deprecated]
+    #[serde(default)]
+    pub nsfw: bool,
+
     /// The custom guild stickers
     pub stickers: Option<Vec<Sticker>>,
 
@@ -189,6 +200,25 @@ pub struct Guild {
 
     /// The id of the channel where admins and moderators of Community guilds receive safety alerts from Discord
     pub safety_alerts_channel_id: Option<String>,
+
+    /// The type of student hub the guild is, if it is a student hub
+    pub hub_type: Option<u8>,
+
+    /// The ID of the guild's latest onboarding prompt option
+    pub latest_onboarding_question_id: Option<String>,
+
+    /// Information on the guild's AutoMod incidents
+    pub incidents_data: Option<AutomodIncidentsData>,
+
+    /// Settings for emoji packs
+    #[deprecated]
+    pub inventory_settings: Option<GuildInventorySettings>,
+
+    /// The guild's powerup information
+    pub premium_features: Option<GuildPremiumFeatures>,
+
+    /// The guild's identity
+    pub profile: Option<GuildIdentity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +328,30 @@ pub struct WelcomeScreenChannel {
 
     /// The unicode emoji displayed for the channel in the welcome screen (if no custom emoji is set)
     pub emoji_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomodIncidentsData {
+    pub dm_spam_detected_at: Option<String>,
+    pub raid_detected_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildInventorySettings {
+    pub is_emoji_pack_collectible: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildPremiumFeatures {
+    pub features: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildIdentity {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub tag: Option<String>,
+    pub badge: Option<u64>,
 }
 
 impl Guild {
