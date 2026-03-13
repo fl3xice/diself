@@ -47,7 +47,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn builder<H>(token: impl Into<String>, handler: H) -> ClientBuilder<H>
+    pub fn builder<H>(token: impl Into<String>, handler: H) -> Result<ClientBuilder<H>>
     where
         H: EventHandler + 'static,
     {
@@ -55,11 +55,11 @@ impl Client {
     }
 
     /// Creates a new client
-    pub fn new(token: impl Into<String>, handler: impl EventHandler + 'static) -> Self {
+    pub fn new(token: impl Into<String>, handler: impl EventHandler + 'static) -> Result<Self> {
         let token = token.into();
-        let http = HttpClient::new(token.clone());
+        let http = HttpClient::new(token.clone())?;
         let cache = Cache::new();
-        Self::from_parts(token, Arc::new(handler), http, cache)
+        Ok(Self::from_parts(token, Arc::new(handler), http, cache))
     }
 
     pub(crate) fn from_parts(

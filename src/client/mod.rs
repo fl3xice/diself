@@ -16,5 +16,6 @@ pub use context::Context;
 pub use event_handler::EventHandler;
 pub use events::{DispatchEvent, DispatchEventType};
 pub use managers::{
-    ChannelsManager, GuildsManager, RelationshipsManager, SearchThreadsParams, UsersManager,
+    ChannelsManager, GuildsManager, RelationshipsManager, SearchParams, SearchThreadsParams,
+    UsersManager,
 };

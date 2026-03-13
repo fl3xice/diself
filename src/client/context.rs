@@ -5,7 +5,7 @@ use crate::client::{
 };
 use crate::error::Result;
 use crate::http::HttpClient;
-use crate::model::{Channel, Message, User};
+use crate::model::{Channel, CreateMessage, Message, User};
 use serde_json::json;
 use std::path::Path;
 
@@ -458,6 +458,73 @@ impl Context {
         ));
         self.http.delete(&url).await?;
         Ok(())
+    }
+
+    /// Sends an advanced message (with embeds, replies, tts, etc.)
+    pub async fn send_message_advanced(
+        &self,
+        channel_id: impl AsRef<str>,
+        message: CreateMessage,
+    ) -> Result<Message> {
+        let url = crate::http::api_url(&format!("/channels/{}/messages", channel_id.as_ref()));
+        let response = self.http.post(&url, message).await?;
+        let msg: Message = serde_json::from_value(response)?;
+        Ok(msg)
+    }
+
+    /// Gets message history for a channel
+    pub async fn get_messages(
+        &self,
+        channel_id: impl AsRef<str>,
+        limit: Option<u32>,
+    ) -> Result<Vec<Message>> {
+        self.channels
+            .get_messages(&self.http, channel_id, limit, None, None, None)
+            .await
+    }
+
+    /// Purges own messages from a channel.
+    /// Fetches messages, filters own, and deletes one by one.
+    /// Returns the number of deleted messages.
+    pub async fn purge_own_messages(
+        &self,
+        channel_id: impl AsRef<str>,
+        limit: u32,
+    ) -> Result<u32> {
+        let channel_id = channel_id.as_ref();
+        let my_id = &self.user.id;
+        let mut deleted = 0u32;
+        let mut before: Option<String> = None;
+
+        while deleted < limit {
+            let batch_size = std::cmp::min(limit - deleted, 100);
+            let messages = self
+                .channels
+                .get_messages(&self.http, channel_id, Some(batch_size), before.clone(), None, None)
+                .await?;
+
+            if messages.is_empty() {
+                break;
+            }
+
+            before = messages.last().map(|m| m.id.clone());
+
+            for msg in &messages {
+                if deleted >= limit {
+                    break;
+                }
+                if msg.author.id == *my_id {
+                    self.delete_message(channel_id, &msg.id).await?;
+                    deleted += 1;
+                }
+            }
+
+            if messages.len() < batch_size as usize {
+                break;
+            }
+        }
+
+        Ok(deleted)
     }
 
     /// Triggers typing indicator in a channel

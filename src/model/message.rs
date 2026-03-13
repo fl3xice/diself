@@ -454,4 +454,25 @@ impl Message {
         http.delete(&url).await?;
         Ok(())
     }
+
+    /// Replies with an advanced message (embeds, tts, etc.)
+    pub async fn reply_with(
+        &self,
+        http: &crate::http::HttpClient,
+        message: crate::model::CreateMessage,
+    ) -> crate::Result<Message> {
+        let msg = crate::model::CreateMessage {
+            message_reference: Some(crate::model::message_builder::MessageReferencePayload {
+                message_id: self.id.clone(),
+                channel_id: Some(self.channel_id.clone()),
+                guild_id: None,
+                fail_if_not_exists: false,
+            }),
+            ..message
+        };
+        let url = crate::http::api_url(&format!("/channels/{}/messages", self.channel_id));
+        let response = http.post(&url, msg).await?;
+        let message: Message = serde_json::from_value(response)?;
+        Ok(message)
+    }
 }

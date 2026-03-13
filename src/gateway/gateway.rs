@@ -19,6 +19,7 @@ pub struct Gateway {
     session_id: Option<String>,
     resume_gateway_url: Option<String>,
     reconnect_attempts: u32,
+    max_reconnect_attempts: u32,
 }
 
 impl Gateway {
@@ -34,6 +35,7 @@ impl Gateway {
             session_id: None,
             resume_gateway_url: None,
             reconnect_attempts: 0,
+            max_reconnect_attempts: 10,
         };
 
         gateway.reconnect(true).await?;
@@ -160,20 +162,19 @@ impl Gateway {
         let Some(conn) = self.connection.as_mut() else {
             return;
         };
-        let mut op14 = json!({
-            "op": 14,
-            "d": {
-                "guild_id": "",
-                "typing": true,
-                "threads": true,
-                "activities": true,
-            }
-        });
         for guild in guilds {
             let Some(guild_id) = guild["id"].as_str() else {
                 continue;
             };
-            op14["d"]["guild_id"] = Value::String(guild_id.to_owned());
+            let op14 = json!({
+                "op": 14,
+                "d": {
+                    "guild_id": guild_id,
+                    "typing": true,
+                    "threads": true,
+                    "activities": true,
+                }
+            });
             if let Err(e) = conn.send(&op14).await {
                 tracing::warn!("Failed to subscribe to guild {}: {}", guild_id, e);
             }
@@ -202,11 +203,18 @@ impl Gateway {
         let mut use_resume = prefer_resume && self.can_resume();
 
         loop {
+            if self.reconnect_attempts >= self.max_reconnect_attempts {
+                return Err(Error::GatewayConnection(
+                    "max reconnect attempts exceeded".to_string(),
+                ));
+            }
+
             if self.reconnect_attempts > 0 {
                 let backoff = self.backoff_with_jitter(self.reconnect_attempts);
                 tracing::warn!(
-                    "Reconnect attempt {} in {:?}",
+                    "Reconnect attempt {}/{} in {:?}",
                     self.reconnect_attempts,
+                    self.max_reconnect_attempts,
                     backoff
                 );
                 time::sleep(backoff).await;

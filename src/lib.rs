@@ -10,13 +10,13 @@ pub use client::{
     ChannelsManager, Client, ClientBuilder, CollectorHub, CollectorOptions, Context,
     DispatchEvent, DispatchEventType, EventHandler, GuildsManager, MessageCollector,
     ReactionCollectEvent, ReactionCollector, ReactionEventType, RelationshipsManager,
-    SearchThreadsParams, UsersManager,
+    SearchParams, SearchThreadsParams, UsersManager,
 };
 pub use error::{CaptchaInfo, Error, Result};
 pub use http::HttpClient;
 pub use model::{
-    Channel, Message, PassiveChannelState, PassiveUpdateV1, ReadStateEntry, ReadySupplemental,
-    User,
+    Channel, CreateMessage, EmbedBuilder, Message, PassiveChannelState, PassiveUpdateV1,
+    ReadStateEntry, ReadySupplemental, User,
 };
 
 /// Prelude module for easy imports
@@ -31,13 +31,13 @@ pub mod prelude {
         ChannelsManager, Client, ClientBuilder, CollectorHub, CollectorOptions, Context,
         DispatchEvent, DispatchEventType, EventHandler, GuildsManager, MessageCollector,
         ReactionCollectEvent, ReactionCollector, ReactionEventType, RelationshipsManager,
-        SearchThreadsParams, UsersManager,
+        SearchParams, SearchThreadsParams, UsersManager,
     };
     pub use crate::error::{CaptchaInfo, Error, Result};
     pub use crate::http::HttpClient;
     pub use crate::model::{
-        Channel, Message, PassiveChannelState, PassiveUpdateV1, ReadStateEntry, ReadySupplemental,
-        User,
+        Channel, CreateMessage, EmbedBuilder, Message, PassiveChannelState, PassiveUpdateV1,
+        ReadStateEntry, ReadySupplemental, User,
     };
     pub use async_trait::async_trait;
 }

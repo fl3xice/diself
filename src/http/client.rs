@@ -1,7 +1,7 @@
 use crate::error::{CaptchaInfo, Error, Result};
 use base64::Engine;
 use rand::RngCore;
-use reqwest::{Client as ReqwestClient, Method, StatusCode};
+use reqwest::{Client as ReqwestClient, Method, RequestBuilder, StatusCode};
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt::Write;
@@ -25,6 +25,9 @@ pub struct HttpClient {
     client: ReqwestClient,
     captcha_handler: Option<CaptchaHandler>,
     heartbeat_session: Arc<parking_lot::RwLock<HeartbeatSession>>,
+    client_launch_id: String,
+    request_delay: Duration,
+    max_rate_limit_retries: u32,
 }
 
 #[derive(Debug)]
@@ -37,16 +40,16 @@ impl HttpClient {
     const HEARTBEAT_SESSION_TTL: Duration = Duration::from_secs(30 * 60);
 
     /// Creates a new HTTP client
-    pub fn new(token: impl Into<String>) -> Self {
+    pub fn new(token: impl Into<String>) -> Result<Self> {
         let client = ReqwestClient::builder()
             .timeout(Duration::from_secs(10))
             .gzip(true)
             .referer(true)
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()
-            .expect("Failed to create HTTP client");
+            .map_err(Error::Http)?;
 
-        Self {
+        Ok(Self {
             token: token.into(),
             client,
             captcha_handler: None,
@@ -54,7 +57,10 @@ impl HttpClient {
                 id: generate_uuid_v4_like(),
                 created_at: Instant::now(),
             })),
-        }
+            client_launch_id: generate_uuid_v4_like(),
+            request_delay: Duration::from_millis(100),
+            max_rate_limit_retries: 3,
+        })
     }
 
     /// Sets a captcha handler for this HTTP client
@@ -64,6 +70,18 @@ impl HttpClient {
         Fut: std::future::Future<Output = Result<String>> + Send + 'static,
     {
         self.captcha_handler = Some(Arc::new(move |info| Box::pin(handler(info))));
+        self
+    }
+
+    /// Sets the delay between requests (default 100ms)
+    pub fn with_request_delay(mut self, delay: Duration) -> Self {
+        self.request_delay = delay;
+        self
+    }
+
+    /// Sets the maximum number of rate limit retries (default 3)
+    pub fn with_max_rate_limit_retries(mut self, n: u32) -> Self {
+        self.max_rate_limit_retries = n;
         self
     }
 
@@ -110,25 +128,14 @@ impl HttpClient {
         self.request_with_captcha(method, url, body, None).await
     }
 
-    /// Generic HTTP request with optional captcha key
-    async fn request_with_captcha<T: Serialize>(
-        &self,
-        method: Method,
-        url: &str,
-        body: Option<&T>,
-        captcha_key: Option<String>,
-    ) -> Result<Value> {
-        // Add a small delay to mimic human behavior (anti-bot measure)
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Keep this heartbeat id fresh for internal analytics/debug use.
+    /// Builds a request with all common headers set
+    fn build_request(&self, method: Method, url: &str) -> RequestBuilder {
         let heartbeat_session_id = self.rotate_heartbeat_session_if_needed();
 
-        let mut request = self
-            .client
-            .request(method.clone(), url)
+        self.client
+            .request(method, url)
             .header("Authorization", &self.token)
-            .header("User-Agent",   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
+            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
             .header("Accept", "*/*")
             .header("Accept-Language", "en-US,en;q=0.9")
             .header("Content-Type", "application/json")
@@ -138,35 +145,53 @@ impl HttpClient {
             .header("Sec-Fetch-Mode", "cors")
             .header("Sec-Fetch-Site", "same-origin")
             .header("X-Discord-Locale", "en-US")
-            .header("X-Discord-Timezone", "America/New_York");
+            .header("X-Discord-Timezone", "America/New_York")
+            .header(
+                "X-Super-Properties",
+                self.super_properties(&heartbeat_session_id),
+            )
+    }
 
-        let x_super_properties = serde_json::json!({
-          "os": "Mac OS X",
-          "browser": "Chrome",
-          "device": "",
-          "system_locale": "en-US",
-          "browser_user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-          "browser_version": "145.0.0.0",
-          "os_version": "10.15.7",
-          "referrer": "https://www.google.com/",
-          "referring_domain": "www.google.com",
-          "referrer_current": "https://www.google.com/",
-          "referring_domain_current": "www.google.com",
-          "search_engine_current": "google",
-          "release_channel": "stable",
-          "client_build_number": 500334,
-          "client_event_source": null,
-          "has_client_mods": false,
-          "client_launch_id": generate_uuid_v4_like(),
-          "launch_signature": "477bea01-90cb-422d-9a38-aaa66ed3e25e",
-          "client_heartbeat_session_id": heartbeat_session_id
+    /// Generates the base64-encoded X-Super-Properties header value
+    fn super_properties(&self, heartbeat_session_id: &str) -> String {
+        let props = serde_json::json!({
+            "os": "Mac OS X",
+            "browser": "Chrome",
+            "device": "",
+            "system_locale": "en-US",
+            "browser_user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+            "browser_version": "145.0.0.0",
+            "os_version": "10.15.7",
+            "referrer": "https://www.google.com/",
+            "referring_domain": "www.google.com",
+            "referrer_current": "https://www.google.com/",
+            "referring_domain_current": "www.google.com",
+            "search_engine_current": "google",
+            "release_channel": "stable",
+            "client_build_number": 500334,
+            "client_event_source": null,
+            "has_client_mods": false,
+            "client_launch_id": self.client_launch_id,
+            "launch_signature": "477bea01-90cb-422d-9a38-aaa66ed3e25e",
+            "client_heartbeat_session_id": heartbeat_session_id
         });
 
-        request = request.header(
-            "X-Super-Properties",
-            base64::engine::general_purpose::STANDARD
-                .encode(serde_json::to_string(&x_super_properties).unwrap()),
-        );
+        base64::engine::general_purpose::STANDARD
+            .encode(serde_json::to_string(&props).unwrap())
+    }
+
+    /// Generic HTTP request with optional captcha key
+    async fn request_with_captcha<T: Serialize>(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&T>,
+        captcha_key: Option<String>,
+    ) -> Result<Value> {
+        // Add a small delay to mimic human behavior (anti-bot measure)
+        tokio::time::sleep(self.request_delay).await;
+
+        let mut request = self.build_request(method.clone(), url);
 
         // Prepare body with captcha key if provided
         if let Some(body) = body {
@@ -178,48 +203,109 @@ impl HttpClient {
             }
             request = request.json(&json_body);
         } else if let Some(key) = captcha_key {
-            // No body but we have captcha key
             request = request.json(&serde_json::json!({ "captcha_key": key }));
         }
 
         let response = request.send().await?;
 
-        // Handle response, check for captcha
-        match self.handle_response(response).await {
-            Err(Error::CaptchaRequired(captcha_info)) => {
-                // Try to solve captcha if handler is available
-                if let Some(ref handler) = self.captcha_handler {
-                    tracing::info!("Captcha required, calling handler...");
-                    // Clone the fields we need before moving captcha_info
-                    let session_id = captcha_info.captcha_session_id.clone();
-                    let rqtoken = captcha_info.captcha_rqtoken.clone();
-                    let solved_key = handler(captcha_info).await?;
-                    tracing::info!("Captcha solved, retrying request...");
-                    // Retry the request with the captcha key using Box::pin for recursion
-                    let body_json = if let Some(b) = body {
-                        Some(serde_json::to_value(b)?)
-                    } else {
-                        None
-                    };
-                    return Box::pin(self.request_with_captcha_value(
-                        method,
-                        url,
-                        body_json,
-                        Some(solved_key),
-                        session_id,
-                        rqtoken,
-                    ))
-                    .await;
-                } else {
-                    // No handler available
-                    Err(Error::CaptchaRequired(captcha_info))
-                }
+        // Handle response, check for rate limits with retry
+        let result = self.handle_response(response).await;
+
+        match result {
+            Err(Error::RateLimit { retry_after }) => {
+                self.retry_rate_limited(method, url, body, None, retry_after)
+                    .await
             }
-            result => result,
+            Err(Error::CaptchaRequired(captcha_info)) => {
+                self.handle_captcha(method, url, body, captcha_info).await
+            }
+            other => other,
         }
     }
 
-    /// Helper for recursion with owned values
+    /// Handles captcha solving and retry
+    async fn handle_captcha<T: Serialize>(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&T>,
+        captcha_info: CaptchaInfo,
+    ) -> Result<Value> {
+        if let Some(ref handler) = self.captcha_handler {
+            tracing::info!("Captcha required, calling handler...");
+            let session_id = captcha_info.captcha_session_id.clone();
+            let rqtoken = captcha_info.captcha_rqtoken.clone();
+            let solved_key = handler(captcha_info).await?;
+            tracing::info!("Captcha solved, retrying request...");
+
+            let body_json = if let Some(b) = body {
+                Some(serde_json::to_value(b)?)
+            } else {
+                None
+            };
+
+            Box::pin(self.request_with_captcha_value(
+                method,
+                url,
+                body_json,
+                Some(solved_key),
+                session_id,
+                rqtoken,
+            ))
+            .await
+        } else {
+            Err(Error::CaptchaRequired(captcha_info))
+        }
+    }
+
+    /// Retries a request after a rate limit, up to max_rate_limit_retries
+    async fn retry_rate_limited<T: Serialize>(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&T>,
+        captcha_key: Option<String>,
+        initial_retry_after: f64,
+    ) -> Result<Value> {
+        let mut retry_after = initial_retry_after;
+        for attempt in 0..self.max_rate_limit_retries {
+            tracing::warn!(
+                "Rate limited, retrying in {:.2}s (attempt {}/{})",
+                retry_after,
+                attempt + 1,
+                self.max_rate_limit_retries
+            );
+            tokio::time::sleep(Duration::from_secs_f64(retry_after)).await;
+            tokio::time::sleep(self.request_delay).await;
+
+            let mut request = self.build_request(method.clone(), url);
+
+            if let Some(body) = body {
+                let mut json_body = serde_json::to_value(body)?;
+                if let Some(ref key) = captcha_key {
+                    if let Some(obj) = json_body.as_object_mut() {
+                        obj.insert("captcha_key".to_string(), Value::String(key.clone()));
+                    }
+                }
+                request = request.json(&json_body);
+            } else if let Some(ref key) = captcha_key {
+                request = request.json(&serde_json::json!({ "captcha_key": key }));
+            }
+
+            let response = request.send().await?;
+            match self.handle_response(response).await {
+                Err(Error::RateLimit { retry_after: ra }) => {
+                    retry_after = ra;
+                    continue;
+                }
+                other => return other,
+            }
+        }
+
+        Err(Error::RateLimit { retry_after })
+    }
+
+    /// Helper for recursion with owned values (captcha retry)
     async fn request_with_captcha_value(
         &self,
         method: Method,
@@ -229,55 +315,11 @@ impl HttpClient {
         captcha_session_id: Option<String>,
         captcha_rqtoken: Option<String>,
     ) -> Result<Value> {
-        // Keep this heartbeat id fresh for internal analytics/debug use.
-        let heartbeat_session_id = self.rotate_heartbeat_session_if_needed();
+        let mut request = self.build_request(method, url);
 
-        let mut request = self
-            .client
-            .request(method, url)
-            .header("Authorization", &self.token)
-            .header("User-Agent",   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
-            .header("Accept", "*/*")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Content-Type", "application/json")
-            .header("Origin", "https://discord.com")
-            .header("Referer", "https://discord.com/channels/@me")
-            .header("Sec-Fetch-Dest", "empty")
-            .header("Sec-Fetch-Mode", "cors")
-            .header("Sec-Fetch-Site", "same-origin")
-            .header("X-Discord-Locale", "en-US")
-            .header("X-Discord-Timezone", "America/New_York")
-            .header("X-Captcha-Key", captcha_key.clone().unwrap_or_default());
-
-        // Add X-Super-Properties header (critical for Discord API)
-        let x_super_properties = serde_json::json!({
-          "os": "Mac OS X",
-          "browser": "Chrome",
-          "device": "",
-          "system_locale": "en-US",
-          "browser_user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-          "browser_version": "145.0.0.0",
-          "os_version": "10.15.7",
-          "referrer": "https://www.google.com/",
-          "referring_domain": "www.google.com",
-          "referrer_current": "https://www.google.com/",
-          "referring_domain_current": "www.google.com",
-          "search_engine_current": "google",
-          "release_channel": "stable",
-          "client_build_number": 500334,
-          "client_event_source": null,
-          "has_client_mods": false,
-          "client_launch_id": generate_uuid_v4_like(),
-          "launch_signature": "477bea01-90cb-422d-9a38-aaa66ed3e25e",
-          "client_heartbeat_session_id": heartbeat_session_id
-        });
-
-        request = request.header(
-            "X-Super-Properties",
-            base64::engine::general_purpose::STANDARD
-                .encode(serde_json::to_string(&x_super_properties).unwrap()),
-        );
-
+        if let Some(ref key) = captcha_key {
+            request = request.header("X-Captcha-Key", key.as_str());
+        }
         if let Some(session_id) = captcha_session_id {
             request = request.header("X-Captcha-Session-Id", session_id);
         }
@@ -294,7 +336,6 @@ impl HttpClient {
             }
             request = request.json(&json_body);
         } else if let Some(key) = captcha_key {
-            // No body but we have captcha key
             request = request.json(&serde_json::json!({ "captcha_key": key }));
         }
 
@@ -307,7 +348,6 @@ impl HttpClient {
         let status = response.status();
 
         if status.is_success() {
-            // If no content (204 No Content), return null
             if status == StatusCode::NO_CONTENT {
                 return Ok(Value::Null);
             }
@@ -315,39 +355,32 @@ impl HttpClient {
             let json = response.json::<Value>().await?;
             Ok(json)
         } else if status == StatusCode::TOO_MANY_REQUESTS {
-            // Rate limit
             let json = response.json::<Value>().await?;
             let retry_after = json["retry_after"].as_f64().unwrap_or(1.0);
             Err(Error::RateLimit { retry_after })
         } else if status == StatusCode::BAD_REQUEST {
-            // Check if it's a captcha error
             let json = response.json::<Value>().await?;
 
             if json.get("captcha_sitekey").is_some() {
-                // It's a captcha error, try to deserialize
                 match serde_json::from_value::<CaptchaInfo>(json.clone()) {
                     Ok(captcha_info) => Err(Error::CaptchaRequired(captcha_info)),
-                    Err(_) => {
-                        // Failed to parse captcha info, treat as regular error
-                        Err(Error::GatewayConnection(format!(
-                            "HTTP {} - {}",
-                            status, json
-                        )))
-                    }
+                    Err(_) => Err(Error::Api {
+                        status: status.as_u16(),
+                        body: json.to_string(),
+                    }),
                 }
             } else {
-                // Regular 400 error
-                Err(Error::GatewayConnection(format!(
-                    "HTTP {} - {}",
-                    status, json
-                )))
+                Err(Error::Api {
+                    status: status.as_u16(),
+                    body: json.to_string(),
+                })
             }
         } else {
             let text = response.text().await.unwrap_or_default();
-            Err(Error::GatewayConnection(format!(
-                "HTTP {} - {}",
-                status, text
-            )))
+            Err(Error::Api {
+                status: status.as_u16(),
+                body: text,
+            })
         }
     }
 

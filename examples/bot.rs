@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
 
     println!("🦀 Starting Bot...\n");
 
-    let client = Client::new(token, MyBot);
+    let client = Client::new(token, MyBot)?;
     client.start().await?;
     Ok(())
 }

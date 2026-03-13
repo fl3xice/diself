@@ -1,8 +1,8 @@
 use crate::error::Result;
 use crate::http::{api_url, HttpClient};
 use crate::model::{
-    Avatar, Ban, Channel, ForumTag, Guild, Member, Relationship, Role, SupplementalMember,
-    SupplementalMessageRequest, User, UserProfile,
+    Avatar, Ban, Channel, CreateMessage, ForumTag, Guild, Member, Message, Relationship, Role,
+    SupplementalMember, SupplementalMessageRequest, User, UserProfile,
 };
 use serde_json::{json, Value};
 
@@ -38,7 +38,7 @@ impl UsersManager {
     ) -> Result<User> {
         let client = if let Some(token) = bot_token {
             // Create temporary HTTP client with bot token
-            HttpClient::new(token)
+            HttpClient::new(token)?
         } else {
             // Use existing client (will likely fail for user tokens)
             http.clone()
@@ -857,6 +857,66 @@ impl RelationshipsManager {
         http.post(url, body).await?;
         Ok(())
     }
+
+    /// Searches messages in a guild (`GET /guilds/{guild.id}/messages/search`).
+    pub async fn search_messages(
+        &self,
+        http: &HttpClient,
+        guild_id: impl AsRef<str>,
+        params: &SearchParams,
+    ) -> Result<Value> {
+        let url = api_url(&format!(
+            "/guilds/{}/messages/search{}",
+            guild_id.as_ref(),
+            params.to_query_string()
+        ));
+        let response = http.get(url).await?;
+        Ok(response)
+    }
+}
+
+/// Parameters for message search endpoints.
+#[derive(Debug, Clone, Default)]
+pub struct SearchParams {
+    pub content: Option<String>,
+    pub author_id: Option<String>,
+    pub channel_id: Option<String>,
+    pub has: Option<String>,
+    pub min_id: Option<String>,
+    pub max_id: Option<String>,
+    pub offset: Option<u32>,
+}
+
+impl SearchParams {
+    fn to_query_string(&self) -> String {
+        let mut params = Vec::new();
+        if let Some(ref v) = self.content {
+            params.push(format!("content={}", urlencoding::encode(v)));
+        }
+        if let Some(ref v) = self.author_id {
+            params.push(format!("author_id={}", v));
+        }
+        if let Some(ref v) = self.channel_id {
+            params.push(format!("channel_id={}", v));
+        }
+        if let Some(ref v) = self.has {
+            params.push(format!("has={}", v));
+        }
+        if let Some(ref v) = self.min_id {
+            params.push(format!("min_id={}", v));
+        }
+        if let Some(ref v) = self.max_id {
+            params.push(format!("max_id={}", v));
+        }
+        if let Some(v) = self.offset {
+            params.push(format!("offset={}", v));
+        }
+        if params.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", params.join("&"))
+        }
+    }
 }
 
 /// Manager for channel-related endpoints.
@@ -1608,5 +1668,123 @@ impl ChannelsManager {
         )))
         .await?;
         Ok(())
+    }
+
+    // ==================== Message Endpoints ====================
+
+    /// Sends a message to a channel using a `CreateMessage` builder.
+    pub async fn send_message(
+        &self,
+        http: &HttpClient,
+        channel_id: impl AsRef<str>,
+        message: CreateMessage,
+    ) -> Result<Message> {
+        let url = api_url(&format!("/channels/{}/messages", channel_id.as_ref()));
+        let response = http.post(url, message).await?;
+        let msg = serde_json::from_value(response)?;
+        Ok(msg)
+    }
+
+    /// Fetches message history for a channel (`GET /channels/{channel.id}/messages`).
+    pub async fn get_messages(
+        &self,
+        http: &HttpClient,
+        channel_id: impl AsRef<str>,
+        limit: Option<u32>,
+        before: Option<String>,
+        after: Option<String>,
+        around: Option<String>,
+    ) -> Result<Vec<Message>> {
+        let mut params = Vec::new();
+        if let Some(l) = limit {
+            params.push(format!("limit={}", l.min(100)));
+        }
+        if let Some(ref b) = before {
+            params.push(format!("before={}", b));
+        }
+        if let Some(ref a) = after {
+            params.push(format!("after={}", a));
+        }
+        if let Some(ref a) = around {
+            params.push(format!("around={}", a));
+        }
+        let query = if params.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", params.join("&"))
+        };
+        let url = api_url(&format!(
+            "/channels/{}/messages{}",
+            channel_id.as_ref(),
+            query
+        ));
+        let response = http.get(url).await?;
+        let messages = serde_json::from_value(response)?;
+        Ok(messages)
+    }
+
+    /// Searches messages in a channel (`GET /channels/{channel.id}/messages/search`).
+    pub async fn search_messages(
+        &self,
+        http: &HttpClient,
+        channel_id: impl AsRef<str>,
+        params: &SearchParams,
+    ) -> Result<Value> {
+        let url = api_url(&format!(
+            "/channels/{}/messages/search{}",
+            channel_id.as_ref(),
+            params.to_query_string()
+        ));
+        let response = http.get(url).await?;
+        Ok(response)
+    }
+
+    // ==================== Pin Endpoints ====================
+
+    /// Pins a message in a channel (`PUT /channels/{channel.id}/pins/{message.id}`).
+    pub async fn pin_message(
+        &self,
+        http: &HttpClient,
+        channel_id: impl AsRef<str>,
+        message_id: impl AsRef<str>,
+    ) -> Result<()> {
+        http.put(
+            api_url(&format!(
+                "/channels/{}/pins/{}",
+                channel_id.as_ref(),
+                message_id.as_ref()
+            )),
+            json!({}),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Unpins a message in a channel (`DELETE /channels/{channel.id}/pins/{message.id}`).
+    pub async fn unpin_message(
+        &self,
+        http: &HttpClient,
+        channel_id: impl AsRef<str>,
+        message_id: impl AsRef<str>,
+    ) -> Result<()> {
+        http.delete(api_url(&format!(
+            "/channels/{}/pins/{}",
+            channel_id.as_ref(),
+            message_id.as_ref()
+        )))
+        .await?;
+        Ok(())
+    }
+
+    /// Gets all pinned messages in a channel (`GET /channels/{channel.id}/pins`).
+    pub async fn get_pinned_messages(
+        &self,
+        http: &HttpClient,
+        channel_id: impl AsRef<str>,
+    ) -> Result<Vec<Message>> {
+        let url = api_url(&format!("/channels/{}/pins", channel_id.as_ref()));
+        let response = http.get(url).await?;
+        let messages = serde_json::from_value(response)?;
+        Ok(messages)
     }
 }

@@ -39,6 +39,9 @@ pub enum Error {
 
     #[error("Captcha handler failed: {0}")]
     CaptchaHandlerFailed(String),
+
+    #[error("Discord API error {status}: {body}")]
+    Api { status: u16, body: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

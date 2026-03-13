@@ -18,16 +18,16 @@ impl<H> ClientBuilder<H>
 where
     H: EventHandler + 'static,
 {
-    pub fn new(token: impl Into<String>, handler: H) -> Self {
+    pub fn new(token: impl Into<String>, handler: H) -> Result<Self> {
         let token = token.into();
-        let http = HttpClient::new(token.clone());
+        let http = HttpClient::new(token.clone())?;
 
-        Self {
+        Ok(Self {
             token,
             handler,
             http,
             cache_config: CacheConfig::default(),
-        }
+        })
     }
 
     pub fn with_cache_config(mut self, config: CacheConfig) -> Self {
@@ -51,6 +51,11 @@ where
         Fut: std::future::Future<Output = Result<String>> + Send + 'static,
     {
         self.http = self.http.with_captcha_handler(handler);
+        self
+    }
+
+    pub fn with_request_delay(mut self, delay: std::time::Duration) -> Self {
+        self.http = self.http.with_request_delay(delay);
         self
     }
 

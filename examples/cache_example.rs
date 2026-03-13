@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
         cache_relationships: true,
     };
 
-    let client = Client::new(token, CacheBot).with_cache_config(cache_config);
+    let client = Client::new(token, CacheBot)?.with_cache_config(cache_config);
 
     client.start().await?;
 

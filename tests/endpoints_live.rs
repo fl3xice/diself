@@ -9,7 +9,7 @@ fn optional_env(name: &str) -> Option<String> {
 }
 
 fn live_http() -> HttpClient {
-    HttpClient::new(required_env("DISCORD_TOKEN"))
+    HttpClient::new(required_env("DISCORD_TOKEN")).expect("Failed to create HTTP client")
 }
 
 #[tokio::test]
